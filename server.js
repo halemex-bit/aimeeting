@@ -73,6 +73,33 @@ Your sole purpose is to analyze the text, ignore the fluff, and instantly extrac
   }
 });
 
+// Endpoint for summarization
+app.post('/api/summarize', async (req, res) => {
+  try {
+    const { fullTranscript } = req.body;
+    if (!fullTranscript) {
+      return res.status(400).json({ error: 'Missing full transcript' });
+    }
+    if (!geminiKey) {
+      return res.status(500).json({ error: 'Gemini API key is missing' });
+    }
+
+    const ai = new GoogleGenerativeAI(geminiKey);
+    const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    const prompt = `Provide a concise, high-level executive summary of the following meeting transcript. Format the output in clean, brief bullet points. Focus on key discussions, highlights, and primary themes.
+
+TRANSCRIPT:
+${fullTranscript}`;
+
+    const result = await model.generateContent(prompt);
+    res.json({ summary: result.response.text() });
+  } catch (error) {
+    console.error('Error summarizing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Settings, AlertCircle, CheckCircle2, ClipboardList, User, MessageSquare } from 'lucide-react';
+import { Mic, MicOff, Settings, AlertCircle, CheckCircle2, ClipboardList, User, MessageSquare, Sparkles, X, ChevronRight } from 'lucide-react';
 
 export default function App() {
   const [isRecording, setIsRecording] = useState(false);
-  const [statusText, setStatusText] = useState('Sedia untuk mula');
+  const [statusText, setStatusText] = useState('Ready to monitor');
   
+  // Modal / Transcribing overlay state
+  const [showLiveModal, setShowLiveModal] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summaryText, setSummaryText] = useState('');
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+
   // Real-time parsed output state
   const [alerts, setAlerts] = useState([]);
   const [keyNotes, setKeyNotes] = useState([]);
@@ -12,6 +18,7 @@ export default function App() {
   
   // Transcripts list
   const [transcripts, setTranscripts] = useState([]);
+  const [currentInterimText, setCurrentInterimText] = useState('');
 
   const transcriptEndRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -20,8 +27,10 @@ export default function App() {
 
   // Auto scroll transcript to bottom with smooth motion
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [transcripts]);
+    if (showLiveModal) {
+      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [transcripts, currentInterimText, showLiveModal]);
 
   // Initialize Speech Recognition for immediate visual feedback
   useEffect(() => {
@@ -45,6 +54,9 @@ export default function App() {
           }
         }
 
+        // Live text stream update
+        setCurrentInterimText(interimTranscript);
+
         if (finalTranscript) {
           const cleanedText = finalTranscript.trim();
           
@@ -58,20 +70,21 @@ export default function App() {
 
           // Add to queue for Gemini analysis
           textBufferRef.current += ' ' + cleanedText;
+          setCurrentInterimText('');
         }
       };
 
       recognition.onerror = (e) => {
         console.error("Speech recognition error", e);
         if (e.error === 'not-allowed') {
-          setStatusText('Akses mikrofon dinafikan');
+          setStatusText('Microphone access denied');
           setIsRecording(false);
         }
       };
 
       recognitionRef.current = recognition;
     } else {
-      setStatusText('Browser anda tidak menyokong Web Speech API');
+      setStatusText('Speech API not supported');
     }
   }, []);
 
@@ -82,7 +95,7 @@ export default function App() {
 
     // Clear buffer so we don't send duplicate chunks
     textBufferRef.current = '';
-    setStatusText('Menganalisis perbualan...');
+    setStatusText('Analyzing conversation...');
 
     try {
       const response = await fetch('http://localhost:5000/api/process-audio', {
@@ -111,12 +124,12 @@ export default function App() {
           });
         }
       }
-      setStatusText('Mendengar secara aktif...');
+      setStatusText('Listening...');
     } catch (err) {
       console.error("Error analyzing text chunk with Gemini:", err);
       // Restore buffer if API failed
       textBufferRef.current = textToSend + ' ' + textBufferRef.current;
-      setStatusText('Gagal menganalisis. Menunggu...');
+      setStatusText('Retrying analysis...');
     }
   };
 
@@ -124,7 +137,8 @@ export default function App() {
     if (!recognitionRef.current) return;
     
     setIsRecording(true);
-    setStatusText('Mendengar secara aktif...');
+    setShowLiveModal(true);
+    setStatusText('Listening...');
     textBufferRef.current = '';
     
     try {
@@ -139,7 +153,7 @@ export default function App() {
 
   const stopRecording = () => {
     setIsRecording(false);
-    setStatusText('Diberhentikan');
+    setStatusText('Stopped');
     
     if (recognitionRef.current) {
       recognitionRef.current.stop();
@@ -150,241 +164,318 @@ export default function App() {
     sendBufferToGemini();
   };
 
+  const triggerSummarization = async () => {
+    if (transcripts.length === 0) return;
+    setIsSummarizing(true);
+    setSummaryText('Generating summary...');
+    setShowSummaryModal(true);
+
+    try {
+      const fullText = transcripts.map(t => `${t.speaker}: ${t.text}`).join('\n');
+      const response = await fetch('http://localhost:5000/api/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullTranscript: fullText })
+      });
+      const data = await response.json();
+      setSummaryText(data.summary || 'No summary could be generated.');
+    } catch (e) {
+      console.error(e);
+      setSummaryText('Failed to generate summary. Please check your connection.');
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col relative overflow-hidden font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col relative overflow-hidden font-sans antialiased selection:bg-purple-500/30">
       
       {/* Background Neon Glowing Orbs */}
-      <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-purple-900/20 blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-900/10 blur-[120px] pointer-events-none" />
+      <div className="absolute top-[-10%] left-[-15%] w-[60%] h-[60%] rounded-full bg-purple-900/10 blur-[130px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-15%] w-[60%] h-[60%] rounded-full bg-indigo-900/10 blur-[130px] pointer-events-none" />
 
       {/* Main Container */}
-      <div className="flex-1 w-full max-w-7xl mx-auto px-6 py-8 flex flex-col z-10">
+      <div className="flex-1 w-full max-w-7xl mx-auto px-6 py-10 flex flex-col z-10">
         
-        {/* Modern Header */}
-        <header className="w-full flex items-center justify-between mb-10 pb-6 border-b border-white/5">
+        {/* iOS 26 Layout Header */}
+        <header className="w-full flex items-center justify-between mb-12 pb-6 border-b border-white/5">
           <div className="flex items-center gap-4">
-            <div className="relative flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 shadow-[0_8px_30px_rgb(124,58,237,0.3)]">
-              <span className="text-xl">🎙️</span>
-              <div className="absolute inset-0 rounded-2xl border border-white/20" />
+            <div className="relative flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-purple-600/90 to-indigo-600/90 shadow-[0_8px_30px_rgb(124,58,237,0.25)] border border-white/10">
+              <span className="text-2xl">🎙️</span>
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+              <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-b from-white to-slate-300 bg-clip-text text-transparent">
                 Crony Meeting
               </h1>
-              <p className="text-xs text-slate-400 font-medium tracking-wide">
-                ANALISIS MESYUARAT KECERDASAN MASA NYATA
+              <p className="text-[10px] font-bold text-slate-400 tracking-widest mt-1">
+                INTELLIGENT MEETING COPILOT
               </p>
             </div>
           </div>
           
-          <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-rose-500/10 border border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]">
-            <span className={`h-2.5 w-2.5 rounded-full bg-rose-500 ${isRecording ? 'animate-ping' : ''}`} />
-            <span className="text-xs font-bold text-rose-400 tracking-wider">🔴 LIVE</span>
+          <div className="flex items-center gap-4">
+            {transcripts.length > 0 && (
+              <button
+                onClick={triggerSummarization}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 transition-all text-xs font-semibold text-slate-200 cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                Summarize Meeting
+              </button>
+            )}
+
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-rose-500/5 border border-rose-500/10">
+              <span className={`h-2 w-2 rounded-full bg-rose-500 ${isRecording ? 'animate-ping' : ''}`} />
+              <span className="text-[10px] font-extrabold text-rose-400 tracking-widest uppercase">LIVE</span>
+            </div>
           </div>
         </header>
 
-        {/* Dashboard Grid */}
+        {/* Dashboard Sections Grid - Split Columns */}
         <div className="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
           
-          {/* Left Panel (Control Panel & Highlights) */}
-          <div className="lg:col-span-5 flex flex-col gap-6">
+          {/* Left: Alerts & Halem Mentions */}
+          <div className="lg:col-span-6 flex flex-col gap-6">
             
-            {/* Control Panel Card */}
-            <div className="glass-card rounded-3xl p-6 shadow-2xl relative overflow-hidden transition-all duration-300 hover:border-white/10 group">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl group-hover:bg-purple-500/10 transition-all duration-500" />
+            {/* Control Panel / Status */}
+            <div className="glass-card rounded-[32px] p-6 shadow-2xl relative overflow-hidden group">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-300">Live Status</h2>
+                  <p className="text-xs text-slate-500 mt-1">{statusText}</p>
+                </div>
+                {!isRecording ? (
+                  <button
+                    onClick={startRecording}
+                    className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-6 py-3 rounded-full transition-all active:scale-[0.97] cursor-pointer shadow-lg shadow-purple-500/10"
+                  >
+                    <Mic className="w-4 h-4" />
+                    Start Session
+                  </button>
+                ) : (
+                  <button
+                    onClick={stopRecording}
+                    className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-6 py-3 rounded-full transition-all active:scale-[0.97] cursor-pointer shadow-lg shadow-rose-500/10"
+                  >
+                    <MicOff className="w-4 h-4" />
+                    Stop Session
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Direct Alerts for Halem */}
+            <div className="glass-card rounded-[32px] p-8 shadow-2xl relative overflow-hidden flex-grow">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xs font-extrabold text-rose-400 tracking-widest uppercase flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400" />
+                  🔔 Tasks for Halem
+                </h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-500/10 text-rose-400 rounded-md border border-rose-500/20">
+                  Priority
+                </span>
+              </div>
               
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-6 flex items-center gap-2">
-                <Settings className="w-4 h-4 text-purple-400" />
-                Panel Kawalan Utama
-              </h2>
-
-              <div className="flex flex-col gap-5">
-                <div className="flex items-center justify-between bg-slate-900/60 rounded-2xl p-4 border border-white/5">
-                  <span className="text-xs font-semibold text-slate-400">Status Mikrofon</span>
-                  <span className={`text-xs font-bold px-3 py-1 rounded-full ${
-                    isRecording 
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
-                      : 'bg-slate-800 text-slate-400'
-                  }`}>
-                    {statusText}
-                  </span>
+              {alerts.length === 0 ? (
+                <div className="h-48 flex flex-col items-center justify-center text-center text-slate-500 border border-dashed border-white/5 rounded-2xl p-4">
+                  <p className="text-xs">No tasks currently identified for Halem.</p>
                 </div>
-
-                <div className="flex gap-4">
-                  {!isRecording ? (
-                    <button
-                      onClick={startRecording}
-                      className="flex-1 flex items-center justify-center gap-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold py-4 px-6 rounded-2xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 cursor-pointer"
+              ) : (
+                <div className="space-y-3">
+                  {alerts.map((alert, idx) => (
+                    <div 
+                      key={idx} 
+                      className="bg-rose-500/[0.03] border border-rose-500/20 text-rose-200 text-xs px-4 py-3.5 rounded-2xl font-medium animate-fadeIn flex items-start gap-3"
+                      style={{ animationDelay: `${idx * 50}ms` }}
                     >
-                      <Mic className="w-5 h-5" />
-                      Mula Dengar
-                    </button>
-                  ) : (
-                    <button
-                      onClick={stopRecording}
-                      className="flex-1 flex items-center justify-center gap-2.5 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-semibold py-4 px-6 rounded-2xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-rose-500/20 cursor-pointer"
-                    >
-                      <MicOff className="w-5 h-5" />
-                      Berhenti
-                    </button>
-                  )}
+                      <ChevronRight className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                      <span>{alert}</span>
+                    </div>
+                  ))}
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* Highlights (Key alerts, Decisions, Actions) */}
-            <div className="glass-card rounded-3xl p-6 shadow-2xl relative overflow-hidden flex-grow flex flex-col justify-start">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-6 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-400" />
-                MAKLUMAN PENTING & KEPUTUSAN
-              </h2>
-
-              {/* Direct Alerts for Halem */}
-              <div className="mb-6">
-                <h3 className="text-xs font-bold text-rose-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-                  </span>
-                  🔔 TUGASAN UNTUK HALEM:
-                </h3>
-                {alerts.length === 0 ? (
-                  <div className="text-xs text-slate-500 italic bg-slate-900/30 rounded-xl p-3 border border-white/5">
-                    Menunggu tugasan Halem dikesan...
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {alerts.map((alert, idx) => (
-                      <div 
-                        key={idx} 
-                        className="bg-rose-950/20 border border-rose-500/30 text-rose-200 text-xs px-4 py-3 rounded-2xl font-medium animate-fadeIn"
-                        style={{ animationDelay: `${idx * 50}ms` }}
-                      >
-                        {alert}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Decisions & Key Notes */}
-              <div className="mb-6">
-                <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  📌 KEPUTUSAN TERKINI:
-                </h3>
-                {keyNotes.length === 0 ? (
-                  <div className="text-xs text-slate-500 italic bg-slate-900/30 rounded-xl p-3 border border-white/5">
-                    Menunggu keputusan utama dikesan...
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {keyNotes.map((note, idx) => (
-                      <div 
-                        key={idx} 
-                        className="bg-emerald-950/20 border border-emerald-500/30 text-emerald-200 text-xs px-4 py-3 rounded-2xl font-medium animate-fadeIn"
-                        style={{ animationDelay: `${idx * 50}ms` }}
-                      >
-                        {note}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* General Action Items */}
-              <div>
-                <h3 className="text-xs font-bold text-sky-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  <ClipboardList className="w-4 h-4 text-sky-400" />
-                  📋 TUGASAN AHLI LAIN:
-                </h3>
-                {actionItems.length === 0 ? (
-                  <div className="text-xs text-slate-500 italic bg-slate-900/30 rounded-xl p-3 border border-white/5">
-                    Tiada tindakan ditugaskan setakat ini.
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {actionItems.map((item, idx) => (
-                      <div 
-                        key={idx} 
-                        className="bg-sky-950/20 border border-sky-500/30 text-sky-200 text-xs px-4 py-3 rounded-2xl font-medium flex justify-between items-center animate-fadeIn"
-                        style={{ animationDelay: `${idx * 50}ms` }}
-                      >
-                        <span>{item.task}</span>
-                        <span className="text-[10px] font-bold uppercase tracking-wider bg-sky-500/20 border border-sky-500/30 px-2 py-0.5 rounded-lg text-sky-300">
-                          {item.assignee}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-            </div>
           </div>
 
-          {/* Right Panel (Transcripts) */}
-          <div className="lg:col-span-7 flex flex-col h-[650px] lg:h-auto">
-            <div className="glass-card rounded-3xl p-6 shadow-2xl flex flex-col h-full relative overflow-hidden">
-              
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-6 flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-indigo-400" />
-                Transkripsi Masa Nyata (Live Stream)
-              </h2>
+          {/* Right: Key Notes & Other Assignees */}
+          <div className="lg:col-span-6 flex flex-col gap-6">
+            
+            {/* Key Notes */}
+            <div className="glass-card rounded-[32px] p-8 shadow-2xl relative overflow-hidden flex-grow">
+              <h3 className="text-xs font-extrabold text-emerald-400 tracking-widest uppercase flex items-center gap-2 mb-6">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                📌 Major Decisions & Notes
+              </h3>
 
-              {/* Scroller View */}
-              <div className="flex-1 overflow-y-auto pr-2 space-y-4 scroll-smooth">
-                {transcripts.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-500 italic text-sm">
-                    <span>Klik "Mula Dengar" untuk memulakan perbualan...</span>
-                  </div>
-                ) : (
-                  transcripts.map((t, idx) => {
-                    const isHalem = t.text.toLowerCase().includes('halem') || t.text.toLowerCase().includes('halim');
-                    return (
-                      <div 
-                        key={idx} 
-                        className={`flex flex-col p-4 rounded-2xl transition-all duration-300 border ${
-                          isHalem
-                            ? 'bg-rose-950/10 border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.05)]'
-                            : 'bg-white/5 border-white/5 opacity-70 hover:opacity-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className={`p-1 rounded-lg ${isHalem ? 'bg-rose-500/20' : 'bg-slate-800'}`}>
-                            <User className={`w-3 h-3 ${isHalem ? 'text-rose-400' : 'text-slate-400'}`} />
-                          </div>
-                          <span className={`text-xs font-bold uppercase tracking-wider ${
-                            isHalem ? 'text-rose-400' : 'text-slate-300'
-                          }`}>
-                            {t.speaker}
-                          </span>
-                        </div>
-                        <p className="text-sm text-slate-200 leading-relaxed font-light">
-                          "{t.text}"
-                        </p>
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={transcriptEndRef} />
-              </div>
-
-              {/* Info footer */}
-              <div className="mt-6 pt-4 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400 font-medium">
-                <span>Pengecaman pertuturan dikuasakan oleh Web Speech API (ms-MY).</span>
-                <span className="text-purple-400">Autoscroll Aktif</span>
-              </div>
+              {keyNotes.length === 0 ? (
+                <div className="h-32 flex flex-col items-center justify-center text-center text-slate-500 border border-dashed border-white/5 rounded-2xl p-4">
+                  <p className="text-xs">Major decisions will appear here.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {keyNotes.map((note, idx) => (
+                    <div 
+                      key={idx} 
+                      className="bg-emerald-500/[0.03] border border-emerald-500/20 text-emerald-200 text-xs px-4 py-3.5 rounded-2xl font-medium animate-fadeIn flex items-start gap-3"
+                      style={{ animationDelay: `${idx * 50}ms` }}
+                    >
+                      <ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                      <span>{note}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {/* General Action Items */}
+            <div className="glass-card rounded-[32px] p-8 shadow-2xl relative overflow-hidden flex-grow">
+              <h3 className="text-xs font-extrabold text-sky-400 tracking-widest uppercase flex items-center gap-2 mb-6">
+                <ClipboardList className="w-4 h-4 text-sky-400" />
+                📋 Team Action Items
+              </h3>
+
+              {actionItems.length === 0 ? (
+                <div className="h-32 flex flex-col items-center justify-center text-center text-slate-500 border border-dashed border-white/5 rounded-2xl p-4">
+                  <p className="text-xs">Assigned tasks will appear here.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {actionItems.map((item, idx) => (
+                    <div 
+                      key={idx} 
+                      className="bg-sky-500/[0.03] border border-sky-500/20 text-sky-200 text-xs px-4 py-3.5 rounded-2xl font-medium flex justify-between items-center animate-fadeIn"
+                      style={{ animationDelay: `${idx * 50}ms` }}
+                    >
+                      <span>{item.task}</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider bg-sky-500/20 border border-sky-500/30 px-2.5 py-1 rounded-lg text-sky-300">
+                        {item.assignee}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
 
         </div>
 
       </div>
 
+      {/* --- Live Transcribing Popup Modal (iOS 26 Style Blur) --- */}
+      {showLiveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Modal Backdrop Blur */}
+          <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-2xl transition-all duration-300" />
+          
+          {/* Modal Box */}
+          <div className="relative w-full max-w-2xl bg-slate-900/80 border border-white/10 rounded-[32px] shadow-2xl overflow-hidden animate-fadeIn flex flex-col max-h-[80vh]">
+            <div className="p-6 border-b border-white/5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-purple-500 animate-pulse" />
+                <h3 className="text-sm font-semibold text-slate-200">Live Transcript Session</h3>
+              </div>
+              <button 
+                onClick={() => {
+                  stopRecording();
+                  setShowLiveModal(false);
+                }}
+                className="p-2 rounded-full bg-white/5 hover:bg-white/10 active:scale-90 transition-all text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Live Text Area */}
+            <div className="flex-1 p-6 overflow-y-auto space-y-4 min-h-[300px]">
+              {transcripts.length === 0 && !currentInterimText ? (
+                <div className="h-full flex items-center justify-center text-slate-500 italic text-xs">
+                  Speak now... Transcript will stream here.
+                </div>
+              ) : (
+                <>
+                  {transcripts.map((t, idx) => (
+                    <div key={idx} className="bg-white/5 border border-white/5 p-4 rounded-2xl animate-fadeIn">
+                      <span className="text-[10px] font-bold text-slate-400 block mb-1">SPEAKER</span>
+                      <p className="text-sm text-slate-200 font-light leading-relaxed">"{t.text}"</p>
+                    </div>
+                  ))}
+                  {currentInterimText && (
+                    <div className="bg-purple-500/10 border border-purple-500/20 p-4 rounded-2xl opacity-80 animate-pulse">
+                      <span className="text-[10px] font-bold text-purple-400 block mb-1">INTERIM</span>
+                      <p className="text-sm text-purple-200 font-light leading-relaxed">"{currentInterimText}"</p>
+                    </div>
+                  )}
+                </>
+              )}
+              <div ref={transcriptEndRef} />
+            </div>
+
+            <div className="p-6 border-t border-white/5 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  stopRecording();
+                  setShowLiveModal(false);
+                }}
+                className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-6 py-3 rounded-full transition-all active:scale-95 cursor-pointer"
+              >
+                End Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Summarization Modal --- */}
+      {showSummaryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-2xl transition-all duration-300" />
+          
+          <div className="relative w-full max-w-2xl bg-slate-900/80 border border-white/10 rounded-[32px] shadow-2xl overflow-hidden animate-fadeIn flex flex-col max-h-[85vh]">
+            <div className="p-6 border-b border-white/5 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-400" />
+                Meeting Executive Summary
+              </h3>
+              <button 
+                onClick={() => setShowSummaryModal(false)}
+                className="p-2 rounded-full bg-white/5 hover:bg-white/10 active:scale-90 transition-all text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 p-8 overflow-y-auto">
+              {isSummarizing ? (
+                <div className="h-48 flex flex-col items-center justify-center gap-3">
+                  <div className="w-8 h-8 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
+                  <span className="text-xs text-slate-400">Gemini is synthesizing transcript...</span>
+                </div>
+              ) : (
+                <div className="prose prose-invert max-w-none text-sm text-slate-300 leading-relaxed space-y-4">
+                  {summaryText.split('\n').map((line, i) => (
+                    <p key={i}>{line}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-white/5 flex justify-end">
+              <button
+                onClick={() => setShowSummaryModal(false)}
+                className="bg-white/10 hover:bg-white/15 text-slate-200 text-xs font-semibold px-6 py-3 rounded-full transition-all active:scale-95 cursor-pointer"
+              >
+                Close Summary
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Social Footer */}
-      <footer className="w-full flex items-center justify-center gap-6 py-6 border-t border-white/5 text-slate-600 text-xs z-10">
-        <span>© 2026 Crony Meeting. Hak Cipta Terpelihara.</span>
+      <footer className="w-full flex items-center justify-center gap-6 py-8 border-t border-white/5 text-slate-600 text-xs z-10">
+        <span>© 2026 Crony Meeting. All Rights Reserved.</span>
         <div className="flex items-center gap-3">
           <a href="https://github.com/halemex-bit/aimeeting" target="_blank" rel="noreferrer" className="hover:text-purple-400 transition-colors">GitHub</a>
         </div>
