@@ -100,6 +100,47 @@ ${fullTranscript}`;
   }
 });
 
+// Endpoint for AI chat assistant
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, history, transcripts } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: 'Missing message' });
+    }
+    if (!geminiKey) {
+      return res.status(500).json({ error: 'Gemini API key is missing' });
+    }
+
+    const ai = new GoogleGenerativeAI(geminiKey);
+    const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    const contextTranscript = transcripts && transcripts.length > 0 
+      ? transcripts.map(t => `${t.speaker}: ${t.text}`).join('\n')
+      : 'No meeting transcript is active yet.';
+
+    const systemPrompt = `You are a helpful, professional executive AI assistant. You have access to the transcript of the active meeting. 
+Answer the user's question clearly and concisely based ONLY on the provided meeting context. If the answer is not mentioned in the transcript context, politely state that it was not discussed during the meeting.
+
+MEETING CONTEXT TRANSCRIPT:
+${contextTranscript}`;
+
+    const contents = [
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      ...history.map(h => ({
+        role: h.sender === 'user' ? 'user' : 'model',
+        parts: [{ text: h.text }]
+      })),
+      { role: 'user', parts: [{ text: message }] }
+    ];
+
+    const result = await model.generateContent({ contents });
+    res.json({ reply: result.response.text() });
+  } catch (error) {
+    console.error('Error chatting:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
